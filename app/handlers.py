@@ -1,22 +1,31 @@
+import pytesseract
 import requests
 import aiohttp
+import sqlite3
+from PIL import Image
+from io import BytesIO
 from aiogram import F, Router
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
+from aiogram.utils.markdown import hlink
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, quote
+
+from datetime import datetime, timedelta
+
+from app.bd import save_to_db, get_db_connection
 
 import app.keyboards as kb
 
 router = Router()
 
-
+# СОСТОЯНИЕ ДЛЯ ВЫБОРА ГРУППЫ
 class GroupDetect(StatesGroup):
     gname = State()
 
-
+# ВЫЗОВ ОПРЕДЕЛЁННЫХ КЛАВИАТУР
 @router.message(CommandStart())
 async def cmd_start(message: Message):
 	await message.answer('Привет, это главное меню!', reply_markup=kb.start)
@@ -30,9 +39,8 @@ async def urls(message: Message):
 async def urls(message: Message):
 	await message.answer('Вот разные имеющиеся графики:', reply_markup=kb.grphs)
 
-# ----------------------------------------- Функции по прочим графикам
-
-# -------- Расписание учебных недель
+# --- ФУНКЦИИ КЛАВИАТУРЫ ПРОЧИХ ГРАФИКОВ ---
+# РАСПИСАНИЕ УЧЕБНЫХ НЕДЕЛЬ
 @router.callback_query(F.data == 'uchned')
 async def raspuchned(callback: CallbackQuery):
     await callback.answer('Выбрано расписание учебных недель')
@@ -41,16 +49,14 @@ async def raspuchned(callback: CallbackQuery):
     purl = 'https://pgups-karelia.ru/edu-process/87081/'
 
     pdf_links = await parse_website(purl, uchned_name)
-    # ПРИДУМАТЬ КАК ОТПРАВЛЯТЬ ЦЕЛЬНЫЕ ССЫЛКИ С ПРОБЕЛАМИ, А ПОТОМ НА ОСНОВАНИИ ЭТОГО ДОПИЛИТЬ 2 НИЖНИЕ ФУНКЦИИ
     if pdf_links:
         for link in pdf_links:
-            encoded_link = quote(link)
-            await callback.message.answer(encoded_link)
+            html_link = f'<a href="{link}">РАСПИСАНИЕ УЧЕБНЫХ НЕДЕЛЬ</a>'
+            await callback.message.answer(html_link, parse_mode='HTML')
     else:
         await callback.message.answer("Что-то пошло не так.")
 
-
-# -------- График проведения консультаций 
+# ГРАФИК ПРОВЕДЕНИЯ КОНСУЛЬТАЦИЙ
 @router.callback_query(F.data == 'grkon')
 async def raspgrkon(callback: CallbackQuery):
     await callback.answer('Выбран график проведения консультаций')
@@ -62,11 +68,12 @@ async def raspgrkon(callback: CallbackQuery):
 
     if pdf_links:
         for link in pdf_links:
-            await callback.message.answer(link)
+            html_link = f'<a href="{link}">ГРАФИК ПРОВЕДЕНИЯ КОНСУЛЬТАЦИЙ</a>'
+            await callback.message.answer(html_link, parse_mode='HTML')
     else:
         await callback.message.answer("Что-то пошло не так.")
 
-# -------- Расписание ПРОМЕЖУТОЧНОЙ АТТЕСТАЦИИ через состояние GroupDetect
+# РАСПИСАНИЕ ПРОМЕЖУТОЧНОЙ АТТЕСТАЦИИ по состоянию GROUPDETECT
 @router.callback_query(F.data == 'rprat')
 async def rasprprat(callback: CallbackQuery, state: FSMContext):
     await state.set_state(GroupDetect.gname)
@@ -75,8 +82,7 @@ async def rasprprat(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer('Введите вашу группу через дефис:')
 
 
-# ------------------------------------------ Функция ПАРСИНГА {url} на наличие {слова} по выбранному тегу
-
+# --- ФУНКЦИЯ ПАРСИНГА по URL на ТЕКСТ по тегам <b> и <strong> ---
 async def parse_website(url, srch_wrd):
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as response:
@@ -90,13 +96,12 @@ async def parse_website(url, srch_wrd):
         for elem_tag in soup.find_all(tag):
             if srch_wrd.lower() in elem_tag.get_text().lower():
                 parent_a_tag = elem_tag.find_parent('a', href=True)
-                if parent_a_tag and parent_a_tag['href'].endswith('.pdf'):
+                if parent_a_tag and parent_a_tag['href']:
                     pdf_links.append(parent_a_tag['href'])
     
     return pdf_links
 
-# ------------------------------------------ Функция выдачи ОСНОВНОГО РАСПИСАНИЯ через состояние GroupDetect по тегу <strong>
-
+# ОСНОВНОЕ РАСПИСАНИЕ по GROUPDETECT
 @router.message(F.text == 'Расписание')
 async def rasping(message: Message, state: FSMContext):
     await state.set_state(GroupDetect.gname)
@@ -104,8 +109,7 @@ async def rasping(message: Message, state: FSMContext):
     await state.update_data(purl=purl)
     await message.answer('Введите вашу группу через дефис:')
 
-# ------------------------------------------ Состояние GroupDetect по парсингу {url} на наличие заголовка группы по выбранному тегу
-
+# --- ФУНКЦИЯ СОСТОЯНИЯ GROUPDETECT ---
 @router.message(GroupDetect.gname)
 async def group_name(message: Message, state: FSMContext):
     await state.update_data(gname=message.text)
@@ -118,15 +122,83 @@ async def group_name(message: Message, state: FSMContext):
 
     if pdf_links:
         for link in pdf_links:
-            await message.answer(link)
+            html_link = f'<a href="{link}">ПОСМОТРЕТЬ РАСПИСАНИЕ</a>'
+            await message.answer(html_link, parse_mode='HTML')
     else:
         await message.answer("PDF документы не найдены или не содержат указанное название группы.")
 
     await state.clear()
 
-# ------------------------------------------ Функция выдачи расписания ЗВОНКОВ
-
+# РАСПИСАНИЕ ЗВОНКОВ
 @router.message(F.text == 'Время звонков')
 async def rasptime(message: Message):
     await message.answer('Вывожу расписание звонков:')
+    raspt_name = 'Расписание звонков'
     purl = 'https://pgups-karelia.ru/edu-process/87081/'
+
+    pdf_links = await parse_website(purl, raspt_name)
+
+    if pdf_links:
+        for link in pdf_links:
+            html_link = f'<a href="{link}">РАСПИСАНИЕ ЗВОНКОВ</a>'
+            await message.answer(html_link, parse_mode='HTML')
+    else:
+        await message.answer("Что-то пошло не так.")
+
+
+# --- ИЗМЕНЕНИЯ НА ЗАВТРАШНИЙ ДЕНЬ ---
+# ПОЛУЧЕНИЕ ВСЕХ ПОСТОВ ГРУППЫ по её URL и VK API
+def get_vk_posts(group_id, access_token):
+    url = f"https://api.vk.com/method/wall.get?owner_id={group_id}&access_token={access_token}&v=5.131"
+    response = requests.get(url)
+    data = response.json()
+    print("VK Data:", data)  # Добавьте эту строку для проверки данных
+    return data['response']['items']
+
+# РАСПОЗНАВАНИЕ ТЕКСТА ФОТО через TESSERACT OCR
+def ocr_image(image_url):
+    response = requests.get(image_url)
+    img = Image.open(BytesIO(response.content))
+    text = pytesseract.image_to_string(img, lang='rus')
+    print("OCR Text:", text)  # Добавьте эту строку для проверки OCR текста
+    return text
+
+# ОСНОВНАЯ ФУНКЦИЯ ПОЛУЧЕНИЯ ЗАМЕН НА ЗАВТРА
+@router.message(F.text == 'Замены на завтра')
+async def send_schedule_changes(message: Message):
+    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+    tomorrow = datetime.today().date() + timedelta(days=1)
+    posts = get_vk_posts(group_id='club226122513', access_token='')
+    results = []
+    for post in posts:
+        checkphotopost = False
+        for attachment in post.get('attachments', []):
+            if attachment['type'] == 'photo':
+                photo_url = attachment['photo']['sizes'][-1]['url']
+                text = ocr_image(photo_url)
+                if f"Изменения в расписании на {tomorrow.strftime('%d')}.{tomorrow.strftime('%m')}.{tomorrow.strftime('%Y')}" in text:
+                    checkphotopost = True
+        if checkphotopost == True:
+            for attachment in post.get('attachments', []):
+                if attachment['type'] == 'photo':
+                    photo_url = attachment['photo']['sizes'][-1]['url']
+                    save_to_db(photo_url)
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT image_url FROM schedule_changes WHERE date_added = ?
+        ''', (tomorrow,))
+        results = cursor.fetchall()
+        print(f"Запрашиваемая дата: {tomorrow}")
+        print(f"Результаты запроса: {results}")  # Добавим отладочный вывод результатов запроса
+        if results:
+            for result in results:
+                print(f"Отправка фото: {result[0]}")  # Отладочный вывод URL
+                await message.answer_photo(result[0])
+        else:
+            await message.reply("Нет изменений в расписании на завтра.")
+    except sqlite3.Error as e:
+        await message.reply(f"Database error: {e}")
+    finally:
+        conn.close()
