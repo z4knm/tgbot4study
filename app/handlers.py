@@ -11,7 +11,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.markdown import hlink
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin, quote
+
 
 from datetime import datetime, timedelta
 
@@ -28,7 +28,7 @@ class GroupDetect(StatesGroup):
 # ВЫЗОВ ОПРЕДЕЛЁННЫХ КЛАВИАТУР
 @router.message(CommandStart())
 async def cmd_start(message: Message):
-	await message.answer('Привет, это главное меню!', reply_markup=kb.start)
+    await message.answer('Здравствуйте! Вы пользуетесь Telegram-ботом, предназначенным для упрощения сбора информации об учебном процессе. Ниже представлена клавиатура с имеющимся функционалом.', reply_markup=kb.start)
 
 
 @router.message(F.text == 'Полезные ссылки')
@@ -45,7 +45,7 @@ async def urls(message: Message):
 async def raspuchned(callback: CallbackQuery):
     await callback.answer('Выбрано расписание учебных недель')
     uchned_name = 'расписание учебных недель'
-    await callback.message.answer('Расписание учебных недель:')
+    await callback.message.answer('Вывожу ниже:')
     purl = 'https://pgups-karelia.ru/edu-process/87081/'
 
     pdf_links = await parse_website(purl, uchned_name)
@@ -61,7 +61,7 @@ async def raspuchned(callback: CallbackQuery):
 async def raspgrkon(callback: CallbackQuery):
     await callback.answer('Выбран график проведения консультаций')
     grkon_name = 'график проведения консультаций'
-    await callback.message.answer('График проведения консультаций:')
+    await callback.message.answer('Вывожу ниже:')
     purl = 'https://pgups-karelia.ru/edu-process/87081/'
 
     pdf_links = await parse_website(purl, grkon_name)
@@ -79,7 +79,8 @@ async def rasprprat(callback: CallbackQuery, state: FSMContext):
     await state.set_state(GroupDetect.gname)
     purl = 'https://pgups-karelia.ru/edu-process/session-ochno-spo/'
     await state.update_data(purl=purl)
-    await callback.message.answer('Введите вашу группу через дефис:')
+    await callback.message.answer('Введите вашу группу:')
+    await callback.message.answer('Пожалуйста, используйте кириллицу и поставьте дефис перед номером (Например, БП-101)')
 
 
 # --- ФУНКЦИЯ ПАРСИНГА по URL на ТЕКСТ по тегам <b> и <strong> ---
@@ -107,7 +108,8 @@ async def rasping(message: Message, state: FSMContext):
     await state.set_state(GroupDetect.gname)
     purl = 'https://pgups-karelia.ru/edu-process/87081/'
     await state.update_data(purl=purl)
-    await message.answer('Введите вашу группу через дефис:')
+    await message.answer('Введите вашу группу:')
+    await message.answer('Пожалуйста, используйте кириллицу и поставьте дефис перед номером (Например, БП-101)')
 
 # --- ФУНКЦИЯ СОСТОЯНИЯ GROUPDETECT ---
 @router.message(GroupDetect.gname)
@@ -116,7 +118,7 @@ async def group_name(message: Message, state: FSMContext):
     gdata = await state.get_data()
     gp_name = gdata["gname"]
     purl = gdata["purl"]
-    await message.answer(f'Расписание для группы: {gdata["gname"]}')
+    await message.answer(f'Вывожу расписание для группы: {gdata["gname"]}')
 
     pdf_links = await parse_website(purl, gp_name)
 
@@ -132,7 +134,7 @@ async def group_name(message: Message, state: FSMContext):
 # РАСПИСАНИЕ ЗВОНКОВ
 @router.message(F.text == 'Время звонков')
 async def rasptime(message: Message):
-    await message.answer('Вывожу расписание звонков:')
+    await message.answer('Вывожу ниже:')
     raspt_name = 'Расписание звонков'
     purl = 'https://pgups-karelia.ru/edu-process/87081/'
 
@@ -152,7 +154,6 @@ def get_vk_posts(group_id, access_token):
     url = f"https://api.vk.com/method/wall.get?owner_id={group_id}&access_token={access_token}&v=5.131"
     response = requests.get(url)
     data = response.json()
-    print("VK Data:", data)  # Добавьте эту строку для проверки данных
     return data['response']['items']
 
 # РАСПОЗНАВАНИЕ ТЕКСТА ФОТО через TESSERACT OCR
@@ -160,15 +161,15 @@ def ocr_image(image_url):
     response = requests.get(image_url)
     img = Image.open(BytesIO(response.content))
     text = pytesseract.image_to_string(img, lang='rus')
-    print("OCR Text:", text)  # Добавьте эту строку для проверки OCR текста
     return text
 
 # ОСНОВНАЯ ФУНКЦИЯ ПОЛУЧЕНИЯ ЗАМЕН НА ЗАВТРА
 @router.message(F.text == 'Замены на завтра')
 async def send_schedule_changes(message: Message):
+    await message.answer("Запрос может занять какое-то время, пожалуйста, подождите...")
     pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
     tomorrow = datetime.today().date() + timedelta(days=1)
-    posts = get_vk_posts(group_id='club226122513', access_token='')
+    posts = get_vk_posts(group_id='pf_pgups', access_token='f97e0458f97e0458f97e0458cafa668675ff97ef97e04589f2278f838cdffcc34f27000')
     results = []
     for post in posts:
         checkphotopost = False
@@ -190,11 +191,8 @@ async def send_schedule_changes(message: Message):
             SELECT image_url FROM schedule_changes WHERE date_added = ?
         ''', (tomorrow,))
         results = cursor.fetchall()
-        print(f"Запрашиваемая дата: {tomorrow}")
-        print(f"Результаты запроса: {results}")  # Добавим отладочный вывод результатов запроса
         if results:
             for result in results:
-                print(f"Отправка фото: {result[0]}")  # Отладочный вывод URL
                 await message.answer_photo(result[0])
         else:
             await message.reply("Нет изменений в расписании на завтра.")
